@@ -1,0 +1,398 @@
+﻿<!DOCTYPE html>
+<!-- Financial Server - a node.js example of a simplified financial markets real-time data server -->
+<!-- Typical use case: Allow clients of an financial services firm to see the current bid and ask prices of -->
+<!-- Stocks in their portfolio in real time.-->
+<!-- -->
+<!-- Author   :   John Greenan-->
+<!-- Date     :   30th September 2014-->
+<!---->
+<script src="/public/Scripts/clientlibrary.js"></script>
+<script src="/public/Scripts/sorttable.js"></script>
+<script src="/public/Scripts/solclient-debug.js"></script>
+<link rel="stylesheet" href="/Public/css/FinancialServer.css" type="text/css" />
+
+<script> 
+    var SUBSCRIPTIONS = ['sol/md/wholesale/fx/rmds/GBP-USD/l1','sol/md/wholesale/fx/rmds/EUR-USD/l1','sol/md/wholesale/fx/rmds/USD-JPY/l1',
+    'sol/md/wholesale/fx/rmds/AUD-USD/l1','sol/md/wholesale/fx/rmds/USD-CAD/l1','sol/md/wholesale/fx/rmds/NZD-USD/l1']
+
+    var SUBTIMEOUT = 30000;
+    var myCode = this;
+    var guid;
+    //Values from the Solace Systems Message Bus
+    var cstrMessageBusNameLast = "last";
+    var cstrMessageBusOpen = "open";
+    var cstrMessageBusHigh = "high";
+    var cstrMessageBusLow = "low";
+    var cstrMessageBusChangeNet = "netchange";
+    var cstrMessageBusChangePercent = "change_percent";
+    var cstrMessageBusUpFlag = "upflag";
+    //Local field names
+    var cstrLocalDataFieldPriceLast = 'PriceLast';
+    var cstrLocalDataFieldPriceOpen = 'PriceOpen';
+    var cstrLocalDataFieldPriceHigh = 'PriceHigh';
+    var cstrLocalDataFieldPriceLow = 'PriceLow';
+    var cstrLocalDataFieldPriceChange = 'PriceChange';
+    var cstrLocalDataFieldPriceChangePercent = 'PriceChangePercent';
+    var cstrLocalDataFieldPriceTimeStamp = 'TimeStamp';
+    //Local field labels - for the user interface
+    var cstrLocalLabelInstrument = 'Instrument';
+    var cstrLocalLabelLast = 'Last';
+    var cstrLocalLabelOpen = 'Open';
+    var cstrLocalLabelHigh = 'High';
+    var cstrLocalLabelLow = 'Low';
+    var cstrLocalLabelChange = 'Change';
+    var cstrLocalLabelChangePercent = 'Change %';
+    var cstrLocalLabelTimeStamp = 'Timestamp';
+
+        //To-do
+        //Send the new solace.SolclientFactoryProperties() data as a lump of JSON to the client...
+        //----------------------------------------------------------------------------------------------------
+        //Singleton - Factory-->Session-->Topic
+        var factoryProps = new solace.SolclientFactoryProperties();
+        factoryProps.logLevel = solace.LogLevel.INFO;
+        console.log(document.URL + ' init solace factory');
+
+        solace.SolclientFactory.init(factoryProps);
+
+        tdSessionProperties = new solace.SessionProperties();
+        tdSessionProperties.userName = '<yourSolace Systems Topic Routing user name here>';
+        tdSessionProperties.vpnName = '<your Solace Systems Topic Routing VPN name here>';
+        tdSessionProperties.password = '<your Solace Systems Topic Routing password here>';
+        tdSessionProperties.url = '<your Solace Systems Topic Routing URL here>';
+        tdSessionProperties.clientName = null;
+        tdSessionProperties.transportProtocol = solace.TransportProtocol.WS_BINARY;
+        tdSessionProperties.reapplySubscriptions = true;
+
+        console.log(document.URL + ' create factory');
+
+
+        function CreateSubscriptions() {
+            for (var i = 0; i < SUBSCRIPTIONS.length; i++) {
+                var topic = solace.SolclientFactory.createTopic(SUBSCRIPTIONS[i]);
+                tdSession.subscribe(topic, true, SUBSCRIPTIONS[i], SUBTIMEOUT);
+                //We must clean up before we get out of the land of Solace, so we add an event to unsubcribe for each subscription....
+                window.addEventListener('beforeunload', function () {
+                    tdSession.unsubscribe(topic, false, SUBSCRIPTIONS[i], SUBTIMEOUT);
+                });
+            };
+            //We must clean up before we get out of the land of Solace, so we add an event to disconnect and dispose...
+            window.addEventListener('beforeunload', function () {
+                tdSession.disconnect();
+                tdSession.dispose();
+            });            
+        };
+
+
+        function ProcessPriceTick(Instrument, PriceLast, PriceOpen, PriceHigh, PriceLow, PriceNetChange, PriceChangePercent, PriceUpTickFlag, SenderTimeStamp) {
+            var TargetForTicks = document.getElementById('TickTable');
+            var createRow = true;
+
+            if (TargetForTicks.children.length == 0) {
+                console.log('TargetForTicks table has no rows');
+
+                //Table has no rows, so add a header...
+                var Header = document.createElement('TR');
+
+                var cell1 = document.createElement('TH');
+                cell1.innerHTML = cstrLocalLabelInstrument;
+
+                var cell2 = document.createElement('TH');
+                cell2.innerHTML = cstrLocalLabelLast;
+
+                var cell3 = document.createElement('TH');
+                cell3.innerHTML = cstrLocalLabelOpen;
+
+                var cell4 = document.createElement('TH');
+                cell4.innerHTML = cstrLocalLabelHigh;
+
+                var cell5 = document.createElement('TH');
+                cell5.innerHTML =cstrLocalLabelLow;
+
+                var cell6 = document.createElement('TH');
+                cell6.innerHTML =cstrLocalLabelChange;
+
+                var cell7 = document.createElement('TH');
+                cell7.innerHTML = cstrLocalLabelChangePercent;
+
+                var cell8 = document.createElement('TH');
+                cell8.innerHTML = cstrLocalLabelTimeStamp;
+
+                Header.appendChild(cell1);
+                Header.appendChild(cell2);
+                Header.appendChild(cell3);
+                Header.appendChild(cell4);
+                Header.appendChild(cell5);
+                Header.appendChild(cell6);
+                Header.appendChild(cell7);
+                Header.appendChild(cell8);
+
+                TargetForTicks.appendChild(Header);
+                console.log('Added header');
+                sortables_init()
+            };
+            createRow = true;
+            if (document.getElementById(Instrument)) {
+                createRow = false;
+            };
+
+            if (createRow) {
+                //We need to use tbody to enable the sortable code to work, since it relies upon the presence of a tbody...
+                var Body = document.createElement('TBODY');
+                var Row = document.createElement('TR');
+
+                var TargetStockCell = document.createElement('TD');
+                var TargetPriceLastCell = document.createElement('TD');
+                var TargetPriceOpenCell = document.createElement('TD');
+                var TargetPriceHighCell = document.createElement('TD');
+                var TargetPriceLowCell = document.createElement('TD');
+                var TargetPriceChangeCell = document.createElement('TD');
+                var TargetPriceChangePercentCell = document.createElement('TD');
+                var TargetTimeStampCell = document.createElement('TD');
+
+                TargetStockCell.id = Instrument;
+                TargetPriceLastCell.id = Instrument + '_' + cstrLocalDataFieldPriceLast
+                TargetPriceOpenCell.id = Instrument + '_' + cstrLocalDataFieldPriceOpen;
+                TargetPriceHighCell.id = Instrument + '_' + cstrLocalDataFieldPriceHigh;
+                TargetPriceLowCell.id = Instrument + '_' + cstrLocalDataFieldPriceLow;
+                TargetPriceChangeCell.id = Instrument + '_' + cstrLocalDataFieldPriceChange;
+                TargetPriceChangePercentCell.id= Instrument + '_' + cstrLocalDataFieldPriceChangePercent;
+                TargetTimeStampCell.id = Instrument + '_' + cstrLocalDataFieldPriceTimeStamp;
+
+                //Add event to send the instrument back to the server...
+                TargetStockCell.addEventListener('click', function () {
+                    WriteDataBackToServer(Instrument);
+                });
+
+                Body.appendChild(Row);
+                Row.appendChild(TargetStockCell);
+                Row.appendChild(TargetPriceLastCell);
+                Row.appendChild(TargetPriceOpenCell);
+                Row.appendChild(TargetPriceHighCell);
+                Row.appendChild(TargetPriceLowCell);
+                Row.appendChild(TargetPriceChangeCell);
+                Row.appendChild(TargetPriceChangePercentCell);
+                Row.appendChild(TargetTimeStampCell);
+                TargetForTicks.appendChild(Body);
+            };
+
+            //So, we have a table now...
+            var TargetStockCell = document.getElementById(Instrument);
+            var TargetPriceLastCell = document.getElementById(Instrument + '_' + cstrLocalDataFieldPriceLast);
+            var TargetPriceOpenCell = document.getElementById(Instrument + '_' + cstrLocalDataFieldPriceOpen);
+            var TargetPriceHighCell = document.getElementById(Instrument + '_' + cstrLocalDataFieldPriceHigh);
+            var TargetPriceLowCell = document.getElementById(Instrument + '_' + cstrLocalDataFieldPriceLow);
+            var TargetPriceChangeCell = document.getElementById(Instrument + '_' + cstrLocalDataFieldPriceChange);
+            var TargetPriceChangePercentCell = document.getElementById(Instrument + '_' + cstrLocalDataFieldPriceChangePercent);
+            var TargetTimeStampCell = document.getElementById(Instrument + '_' + cstrLocalDataFieldPriceTimeStamp);
+            //Push the values into the innerHTML
+            //debugger;
+            TargetStockCell.innerHTML = Instrument;
+            TargetPriceLastCell.innerHTML = PriceLast;
+            TargetPriceOpenCell.innerHTML = PriceOpen;
+            TargetPriceHighCell.innerHTML = PriceHigh;
+            TargetPriceLowCell.innerHTML = PriceLow;
+            TargetPriceChangeCell.innerHTML = PriceNetChange;
+            TargetPriceChangePercentCell.innerHTML = PriceChangePercent;
+            if (SenderTimeStamp == null) {
+                TargetTimeStampCell.innerHTML = '';
+            } else {
+                TargetTimeStampCell.innerHTML = SenderTimeStamp;
+            };
+        };
+
+        function CallBackMessage(session, message){
+            //handle message
+            console.log(document.URL + ' CallBackMessage ');
+            console.log(document.URL + ' CallBackMessage ' + message.dump(solace.MessageDumpFlag.MSGDUMP_BRIEF));
+            console.log(document.URL + ' CallBackMessage ' + message.getDestination());
+            console.log(document.URL + ' CallBackMessage ' + message.getUserData());
+            var mType = message.getType();
+            console.log(document.URL + ' CallBackMessage ' + mType.toString());
+            switch (mType) {
+                case solace.MessageType.BINARY:
+                    break;
+                case solace.MessageType.MAP:
+                    //debugger;
+                    var mFieldPayload = message.getSdtContainer();
+                    var mPayload = mFieldPayload.getValue();
+                    //Actually, we will have to chop this up on the delimiter - so we get the right data...
+                    var mRawInstrument = message.getDestination().getName();
+                    console.log(document.URL + ' CallBackMessage ' + mRawInstrument);
+                    var mInstrument = mRawInstrument.split('/');
+
+                    var mInstrument = mInstrument[5];
+                    var mSenderTimeStamp = message.getSenderTimestamp();
+
+                    var mPriceLast = mPayload.getField(cstrMessageBusNameLast).getValue();
+                    var mPriceOpen = mPayload.getField(cstrMessageBusOpen).getValue();
+                    var mPriceHigh = mPayload.getField(cstrMessageBusHigh).getValue();
+                    var mPriceLow = mPayload.getField(cstrMessageBusLow).getValue();
+                    var mPriceNetChange = mPayload.getField(cstrMessageBusChangeNet).getValue();
+                    var mPriceChangePercent = mPayload.getField(cstrMessageBusChangePercent).getValue();
+                    var mPriceUpTickFlag = mPayload.getField(cstrMessageBusUpFlag).getValue();
+
+                    ProcessPriceTick(mInstrument, mPriceLast, mPriceOpen, mPriceHigh, mPriceLow, mPriceNetChange, mPriceChangePercent, mPriceUpTickFlag, mSenderTimeStamp);
+
+                    /*
+                    //This commented out section is to allow for discovery of the fields that are being passed to the UX
+                    //when you don't know in advance...
+                    var mKeys = mPayload.getKeys();
+                    var mFieldLength = mKeys.length;
+                    //debugger;
+                    for (var i = 0; i < mFieldLength; i++) {
+                        console.log(document.URL + ' CallBackMessage ' + 'Switch on key getType()');
+                        var mField = mPayload.getField(mKeys[i]) ;
+                        switch (mField.getType()) {
+                            case solace.SDTFieldType.BOOL:
+                                console.log(document.URL + ' CallBackMessage solace.SDTFieldType.BOOL' + mField.getValue());
+                                break;
+                            case solace.SDTFieldType.BYTEARRAY:
+                                console.log(document.URL + ' CallBackMessage solace.SDTFieldType.BYTEARRAY' + mField.getValue());
+                                break;
+                            case solace.SDTFieldType.DESTINATION:
+                                console.log(document.URL + ' CallBackMessage solace.SDTFieldType.DESTINATION' + mField.getValue());
+                                break;
+                            case solace.SDTFieldType.DOUBLETYPE:
+                                console.log(document.URL + ' CallBackMessage solace.SDTFieldType.DOUBLETYPE' + mField.getValue());
+                                break;
+                            case solace.SDTFieldType.FLOATTYPE:
+                                console.log(document.URL + ' CallBackMessage solace.SDTFieldType.FLOATTYPE' + mField.getValue());
+                                break;
+                            case solace.SDTFieldType.INT16:
+                                console.log(document.URL + ' CallBackMessage solace.SDTFieldType.INT16' + mField.getValue());
+                                break;
+                            case solace.SDTFieldType.INT32:
+                                console.log(document.URL + ' CallBackMessage solace.SDTFieldType.INT32' + mField.getValue());
+                                break;
+                            case solace.SDTFieldType.INT8:
+                                console.log(document.URL + ' CallBackMessage solace.SDTFieldType.INT8' + mField.getValue());
+                                break;
+                            case solace.SDTFieldType.MAP:
+                                console.log(document.URL + ' CallBackMessage solace.SDTFieldType.MAP' + mField.getValue());
+                                break;
+                            case solace.SDTFieldType.NULLTYPE:
+                                console.log(document.URL + ' CallBackMessage solace.SDTFieldType.NULLTYPE' + mField.getValue());
+                                break;
+                            case solace.SDTFieldType.SMF_MESSAGE:
+                                console.log(document.URL + ' CallBackMessage solace.SDTFieldType.SMF_MESSAGE' + mField.getValue());
+                                break;
+                            default:
+                        }
+                     
+                    }
+                       */
+                    break;
+                case solace.MessageType.STREAM:
+                    break;
+                case solace.MessageType.TEXT:
+                    break;
+                default:
+            }
+
+        };
+
+        function CallBackSession(session, event) {
+            //handle event
+            console.log(document.URL + ' CallBackSession');
+            switch (event.sessionEventCode) {
+                case solace.SessionEventCode.UP_NOTICE:
+                    console.log(event.toString());
+                    CreateSubscriptions();
+                    break;
+                case solace.SessionEventCode.CAN_ACCEPT_DATA:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.CONNECT_FAILED_ERROR:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.CONNECTING:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.DATA_DECODE_ERROR:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.DISCONNECTED:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.DOWN_ERROR:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.INTERNAL_ERROR:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.KEEP_ALIVE_ERROR:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.LOGIN_FAILURE:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.P2P_SUB_ERROR:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.PARSE_FAILURE:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.PROPERTY_UPDATE_ERROR:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.PROPERTY_UPDATE_OK:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.REAPPLY_SUBSCRIPTION_ERROR:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.REJECTED_MESSAGE_ERROR:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.REQUEST_ABORTED:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.REQUEST_TIMEOUT:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.SUBSCRIPTION_ERROR:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.SUBSCRIPTION_OK:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.UP_NOTICE:
+                    console.log(event.toString());
+                    break;
+                case solace.SessionEventCode.VIRTUALROUTER_NAME_CHANGED:
+                    console.log(event.toString());
+                    break;
+                default:
+                    console.log(event.toString());
+            }
+        };
+
+
+    try {
+        var tdSession = solace.SolclientFactory.createSession(
+            tdSessionProperties,
+            new solace.MessageRxCBInfo(function(session, message){
+                console.log(document.URL + ' MessageRxCBInfo');
+                myCode.CallBackMessage(session, message);
+            },this),
+            new solace.SessionEventCBInfo(function(session, event){
+                console.log(document.URL + ' SessionEventCBInfo');
+                myCode.CallBackSession(session, event);
+            },this));
+            tdSession.connect();
+    }
+    catch (e) {
+                console.log(document.URL + ' ' + e.toString());
+            };
+
+</script>
+    <html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8" />
+        <title>Pricing Grid</title>
+    </head>
+        <body>
+            <table class="sortable" id="TickTable"></table>
+            <!--button onclick="sortables_init()" id="SortButton">Sort Table</!--button>-->
+        </body>
+</html> 
