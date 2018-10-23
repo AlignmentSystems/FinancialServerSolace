@@ -111,7 +111,7 @@ app.get('/public/Scripts/solclientjs.js', function (req, res) {
 });
 
 app.get('/public/pages/SolaceTickData.html', function (req, res) {
-    var FileToServe = path.join(__dirname, '/Public/pages/SolaceTickData.html');
+    var FileToServe = path.join(__dirname, '/Public/Pages/SolaceTickData.html');
     res.sendFile(FileToServe);
     console.log('Serving up: ' + FileToServe);
 });
